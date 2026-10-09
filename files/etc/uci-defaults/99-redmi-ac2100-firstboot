@@ -1,0 +1,72 @@
+#!/bin/sh
+# First-boot defaults for Redmi AC2100. This script is removed after successful execution.
+set -eu
+
+# Appliance identity and management LAN.
+uci -q set system.@system[0].hostname='Redmi-AC2100'
+uci -q set network.lan.ipaddr='192.168.31.1'
+
+# IPv4-only policy: remove any IPv6 interface/address/PD configuration that may exist.
+uci -q delete network.globals.ula_prefix || true
+for key in ip6assign ip6hint ip6class ip6addr ip6prefix; do
+    uci -q delete "network.lan.${key}" || true
+done
+uci -q set network.lan.ipv6='0'
+uci -q set network.wan.ipv6='0'
+uci -q delete network.wan6 || true
+for section in $(uci -q show network | sed -n 's/^network\.\([^.=]*\)=interface$/\1/p'); do
+    proto="$(uci -q get "network.${section}.proto" 2>/dev/null || true)"
+    [ "$proto" = 'dhcpv6' ] && uci -q delete "network.${section}" || true
+done
+uci -q commit network
+
+# No DHCPv6, Router Advertisement or NDP service. IPv4 DHCP remains dnsmasq's job.
+uci -q set dhcp.lan.dhcpv6='disabled'
+uci -q set dhcp.lan.ra='disabled'
+uci -q set dhcp.lan.ndp='disabled'
+uci -q commit dhcp
+
+# Wi-Fi: enable radios and set default SSIDs (no encryption by default; user should secure via SSH).
+# radio0 = MT7603 2.4 GHz, radio1 = MT7615 5 GHz (usual OpenWrt naming on RM2100).
+uci -q set wireless.radio0.disabled='0'
+uci -q set wireless.radio1.disabled='0'
+
+# Find the wifi-iface sections for each radio and configure SSIDs.
+# Typical layout: @wifi-iface[0] on radio0 (2.4G), @wifi-iface[1] on radio1 (5G).
+# We'll match by radio name to be safe.
+for iface in $(uci -q show wireless | sed -n 's/^wireless\.\([^.=]*\)=wifi-iface$/\1/p'); do
+    radio="$(uci -q get "wireless.${iface}.device" 2>/dev/null || true)"
+    case "$radio" in
+        radio0)
+            uci -q set "wireless.${iface}.ssid='Redmi_579E_2.4'"
+            uci -q set "wireless.${iface}.encryption='none'"
+            ;;
+        radio1)
+            uci -q set "wireless.${iface}.ssid='Redmi_579E'"
+            uci -q set "wireless.${iface}.encryption='none'"
+            ;;
+    esac
+    uci -q set "wireless.${iface}.disabled='0'"
+done
+uci -q commit wireless
+
+# Keep proxy traffic on the normal firewall path. Do not bypass nftables TProxy with flow offload.
+uci -q set firewall.@defaults[0].flow_offloading='0'
+uci -q set firewall.@defaults[0].flow_offloading_hw='0'
+uci -q commit firewall
+
+# ZRAM is virtual compressed swap, not extra physical RAM. Use conservative LZO and high priority.
+uci -q set system.@system[0].zram_size_mb='64'
+uci -q set system.@system[0].zram_comp_algo='lzo'
+uci -q set system.@system[0].zram_priority='100'
+uci -q commit system
+
+# Enable the zram init service explicitly; no ZRAM memory is consumed until swap pages are used.
+[ -x /etc/init.d/zram ] && /etc/init.d/zram enable
+
+# Initial root password (default as requested).
+command -v chpasswd >/dev/null 2>&1 || exit 1
+printf '%s\n' 'root:password' | chpasswd
+
+uci -q commit system
+exit 0
