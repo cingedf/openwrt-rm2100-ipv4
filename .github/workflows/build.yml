@@ -92,6 +92,16 @@ jobs:
           make defconfig
           mkdir -p "$GITHUB_WORKSPACE/artifacts"
           cp .config "$GITHUB_WORKSPACE/artifacts/resolved-openwrt.config"
+
+      - name: Force critical core packages after defconfig
+        run: |
+          set -Eeuo pipefail
+          cd "$SOURCE_DIR"
+          for pkg in base-files busybox procd netifd ubus ubusd uci logd; do
+            ./scripts/config --enable "CONFIG_PACKAGE_${pkg}"
+          done
+          make defconfig
+          cp .config "$GITHUB_WORKSPACE/artifacts/resolved-openwrt.config"
           {
             for feed_dir in feeds/*; do
               [ -d "$feed_dir/.git" ] || continue
